@@ -41,12 +41,42 @@ if TYPE_CHECKING:
     from llama_index.schema import NodeWithScore
     from RetrievalAugmentedGeneration.common.configuration_wizard import ConfigWizard
 
+from FlagEmbedding import FlagReranker
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONTEXT = 1500
 DEFAULT_NUM_TOKENS = 150
 TEXT_SPLITTER_EMBEDDING_MODEL = "intfloat/e5-large-v2"
 
+class LimitRetrievedNodesLength_and_rerank():
+
+    def _postprocess_nodes(
+        self, nodes: List["NodeWithScore"] = [], query_bundle: Optional["QueryBundle"] = None
+    ) -> List["NodeWithScore"]:
+        included_nodes = []
+        rerank_scores = []
+
+        limit = DEFAULT_MAX_CONTEXT
+        reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True)
+        prompt = query_bundle.query_str
+
+        for node in nodes:
+            content = node.node.get_content(metadata_mode=MetadataMode.LLM)
+            rerank_score = reranker.compute_score([prompt, content])
+
+            current_length += len(globals_helper.tokenizer(content))
+            if current_length > limit:
+                break
+
+            rerank_scores.append(rerank_score)
+            included_nodes.append(node)
+        
+        retrieved_nodes = zip(include_nodes, rerank_scores)
+        zipped_sorted = sorted(retrieved_nodes, key=lambda x:x[1], reverse=True) 
+        reranked_nodes, _ = zip(*zipped_sorted)
+
+        return included_nodes
 
 class LimitRetrievedNodesLength(BaseNodePostprocessor):
     """Llama Index chain filter to limit token lengths."""
